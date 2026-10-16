@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reporte de mantenciones — Retina Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --ink:#0D2B3E; --slate:#64748B; --bg:#F6F5F1; --card:#FFFFFF; --line:#E2E5E7;
+    --verde:#8CBF52; --morado:#9B7FC1; --azul:#4A90D9; --coral:#D6493B;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:'Inter',-apple-system,'Segoe UI',sans-serif; background:var(--bg); color:var(--ink); }
+  header{ background:var(--card); border-bottom:1px solid var(--line); padding:24px 40px 18px; }
+  header h1{ margin:0 0 4px; font-size:24px; }
+  header p{ margin:0; color:var(--slate); font-size:14px; }
+  .filtros{ display:flex; gap:16px; flex-wrap:wrap; padding:18px 40px; align-items:end; }
+  .filtros label{ display:block; font-size:12px; font-weight:600; color:var(--slate); margin-bottom:4px; }
+  .filtros select, .filtros input{
+    font-family:inherit; font-size:14px; padding:8px 12px; min-width:180px;
+    border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--ink);
+  }
+  main{ padding:0 40px 50px; display:grid; gap:16px; grid-template-columns:repeat(12, 1fr); }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; }
+  .card h2{ margin:0 0 12px; font-size:14px; font-weight:700; }
+  .span12{ grid-column:span 12; } .span6{ grid-column:span 6; } .span4{ grid-column:span 4; } .span3{ grid-column:span 3; }
+  .grande{ font-size:56px; font-weight:700; text-align:center; padding:30px 0; }
+  .chart-box{ position:relative; height:320px; }
+  .donut-box{ position:relative; height:220px; }
+  .donut-centro{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:32px; font-weight:700; pointer-events:none; }
+  table{ border-collapse:collapse; width:100%; font-size:13px; }
+  th, td{ padding:7px 10px; border-bottom:1px solid var(--line); }
+  th{ text-align:left; background:#F0EFEA; font-weight:700; }
+  td.num, th.num{ text-align:right; }
+  tr.total td{ font-weight:700; background:#F0EFEA; }
+  .prom{ display:flex; justify-content:space-between; font-size:15px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .prom b{ font-size:20px; }
+  .error{ color:var(--coral); padding:20px 40px; }
+  @media (max-width:900px){ .span6,.span4,.span3{ grid-column:span 12; } header,.filtros,main{ padding-left:18px; padding-right:18px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Reporte de mantenciones</h1>
+  <p>Mantenciones remotas y en terreno, directo desde la base de datos.</p>
+</header>
+
+<div class="filtros">
+  <div><label for="fMes">Fecha (mes)</label><input type="month" id="fMes"></div>
+  <div><label for="fEmpresa">Empresa</label><select id="fEmpresa"></select></div>
+  <div><label for="fCentro">Centro</label><select id="fCentro"></select></div>
+</div>
+
+<div id="msg"></div>
+
+<main>
+  <div class="card span12">
+    <h2>Cantidad de mantenciones al mes y % Remoto</h2>
+    <div class="chart-box"><canvas id="chMeses"></canvas></div>
+  </div>
+
+  <div class="card span3">
+    <h2>Total mantenciones este mes</h2>
+    <div class="grande" id="kTotal">—</div>
+  </div>
+
+  <div class="card span4">
+    <h2>Cantidad de mantenciones por región</h2>
+    <table>
+      <thead><tr><th>Ubicación</th><th class="num">Remoto</th><th class="num">Terreno</th></tr></thead>
+      <tbody id="tbRegion"></tbody>
+    </table>
+  </div>
+
+  <div class="card span3">
+    <h2>% Remoto</h2>
+    <div class="donut-box">
+      <canvas id="chDonut"></canvas>
+      <div class="donut-centro" id="kPct">—</div>
+    </div>
+  </div>
+
+  <div class="card span2" style="grid-column:span 2;">
+    <h2>Promedio por día</h2>
+    <div class="prom"><span>Remoto</span><b id="pRemoto">—</b></div>
+    <div class="prom"><span>Terreno</span><b id="pTerreno">—</b></div>
+  </div>
+</main>
+
+<script>
+const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const etiquetaMes = ym => { const [y, m] = ym.split('-'); return `${MESES[+m - 1]} ${y}`; };
+
+const fMes = document.getElementById('fMes');
+const fEmpresa = document.getElementById('fEmpresa');
+const fCentro = document.getElementById('fCentro');
+const msg = document.getElementById('msg');
+
+let chMeses = null, chDonut = null;
+
+// Mes por defecto: el actual
+const hoy = new Date();
+fMes.value = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+
+async function cargarFiltros() {
+  const r = await fetch('/api/filtros');
+  const f = await r.json();
+  fEmpresa.innerHTML = '<option value="">Todas</option>' + f.empresas.map(e => `<option>${e}</option>`).join('');
+  fCentro.innerHTML = '<option value="">Todos</option>' + f.centros.map(c => `<option>${c}</option>`).join('');
+}
+
+async function cargarReporte() {
+  msg.innerHTML = '';
+  const params = new URLSearchParams({ mes: fMes.value, empresa: fEmpresa.value, centro: fCentro.value });
+  const r = await fetch('/api/reporte?' + params);
+  if (!r.ok) { msg.innerHTML = '<div class="error">No se pudo cargar el reporte.</div>'; return; }
+  const d = await r.json();
+
+  // Número grande
+  document.getElementById('kTotal').textContent = d.total;
+
+  // Tabla por región
+  const tb = document.getElementById('tbRegion');
+  tb.innerHTML = d.porRegion.map(x =>
+    `<tr><td>${x.ubicacion}</td><td class="num">${x.remoto || ''}</td><td class="num">${x.terreno || ''}</td></tr>`
+  ).join('') + `<tr class="total"><td>Totales generales</td><td class="num">${d.remoto}</td><td class="num">${d.terreno}</td></tr>`;
+
+  // % Remoto (donut)
+  const pct = d.total ? Math.round(d.remoto / d.total * 1000) / 10 : 0;
+  document.getElementById('kPct').textContent = pct + '%';
+  if (chDonut) chDonut.destroy();
+  chDonut = new Chart(document.getElementById('chDonut'), {
+    type: 'doughnut',
+    data: { labels: ['Remoto', 'Terreno'], datasets: [{ data: [d.remoto, d.terreno], backgroundColor: [getComputedStyle(document.documentElement).getPropertyValue('--azul'), '#E2E5E7'], borderWidth: 0 }] },
+    options: { cutout: '72%', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  });
+
+  // Promedio por día
+  document.getElementById('pRemoto').textContent = (d.remoto / d.dias).toFixed(1);
+  document.getElementById('pTerreno').textContent = (d.terreno / d.dias).toFixed(1);
+
+  // Barras + línea de % remoto
+  if (chMeses) chMeses.destroy();
+  chMeses = new Chart(document.getElementById('chMeses'), {
+    data: {
+      labels: d.porMes.map(x => etiquetaMes(x.mes)),
+      datasets: [
+        { type: 'bar', label: 'Total mantenciones', data: d.porMes.map(x => x.total), backgroundColor: '#8CBF52', yAxisID: 'y' },
+        { type: 'line', label: '% Remoto', data: d.porMes.map(x => x.total ? Math.round(x.remoto / x.total * 1000) / 10 : 0),
+          borderColor: '#9B7FC1', borderDash: [6, 4], pointBackgroundColor: '#9B7FC1', tension: 0.3, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      maintainAspectRatio: false,
+      scales: {
+        y:  { beginAtZero: true, title: { display: true, text: 'Cantidad' } },
+        y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+}
+
+[fMes, fEmpresa, fCentro].forEach(el => el.addEventListener('change', cargarReporte));
+cargarFiltros().then(cargarReporte).catch(() => { msg.innerHTML = '<div class="error">No se pudo conectar con el servidor.</div>'; });
+</script>
+</body>
+</html>
